@@ -1,2 +1,2 @@
 # burnin-sprintz
-burnin'SPRINTZ is a open-source task manager dashboard.
+burnin'SPRINTZ is an open-source task manager dashboard.
