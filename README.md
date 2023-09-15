@@ -1,2 +1,2 @@
-# burnin-sprintz
-burnin'SPRINTZ is an open-source task manager dashboard.
+# Compendium
+is an open-source task manager and note-taking dashboard.
