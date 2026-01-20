@@ -1,0 +1,540 @@
+<template>
+  <!-- Tela de não autenticado -->
+  <NotAuthenticated v-if="!isAuthenticated && !isLoading" />
+  
+  <!-- Loading -->
+  <div v-else-if="isLoading" class="loading-screen">
+    <p>Loading...</p>
+  </div>
+  
+  <!-- Dashboard -->
+  <div v-else class="compendium-dashboard">
+    <!-- Botão de salvar flutuante -->
+    <button 
+      class="save-button" 
+      :class="{ saving: isSaving, saved: showSaved }"
+      @click="handleSave"
+      :disabled="isSaving"
+      :title="lastSyncedAt ? `Last saved: ${formatLastSync(lastSyncedAt)}` : 'Save to cloud'"
+    >
+      <Icon v-if="isSaving" name="ph:circle-notch-bold" size="20" class="spin" />
+      <Icon v-else-if="showSaved" name="ph:check-bold" size="20" />
+      <Icon v-else name="ph:cloud-arrow-up-bold" size="20" />
+      <span class="save-text">{{ saveButtonText }}</span>
+    </button>
+
+    <div class="dashboard-grid">
+      <!-- Calendário Semanal -->
+      <div class="grid-item calendar-section">
+        <MiniCalendar 
+          :appointments="appointments"
+          :goals="goals"
+          @select-day="openDaySummary"
+          @open-full-calendar="openFullCalendar"
+        />
+      </div>
+      
+      <!-- Notas Rápidas -->
+      <div class="grid-item notes-section">
+        <MiniNotes 
+          :notes="notes"
+          @add-note="openNotesModal()"
+          @edit-note="openNotesModal"
+          @delete-note="deleteNote"
+        />
+      </div>
+      
+      <!-- Compromissos -->
+      <div class="grid-item appointments-section">
+        <MiniAppointments 
+          :appointments="appointments"
+          @add-appointment="openAppointmentsModal"
+          @delete-appointment="deleteAppointment"
+          @view-appointment="viewAppointment"
+        />
+      </div>
+      
+      <!-- Metas -->
+      <div class="grid-item goals-section">
+        <MiniGoals 
+          :goals="goals"
+          @add-goal="openGoalsModal()"
+          @edit-goal="openGoalsModal"
+          @delete-goal="deleteGoal"
+        />
+      </div>
+    </div>
+    
+    <!-- Modais -->
+    <NotesModal 
+      v-if="modals.notes"
+      :note="selectedNote"
+      @close="closeNotesModal"
+      @save="saveNote"
+    />
+    
+    <AppointmentsModal 
+      v-if="modals.appointments"
+      @close="closeAppointmentsModal"
+      @save="saveAppointment"
+    />
+    
+    <GoalsModal 
+      v-if="modals.goals"
+      :goal="selectedGoal"
+      @close="closeGoalsModal"
+      @save="saveGoal"
+    />
+    
+    <DaySummaryModal 
+      v-if="modals.daySummary"
+      :date="selectedDate"
+      :appointments="appointments"
+      :goals="goals"
+      @close="closeDaySummary"
+      @view-appointment="viewAppointmentFromSummary"
+      @view-goal="viewGoalFromSummary"
+    />
+    
+    <FullCalendarModal 
+      v-if="modals.fullCalendar"
+      :appointments="appointments"
+      :goals="goals"
+      @close="closeFullCalendar"
+      @select-day="openDaySummaryFromCalendar"
+    />
+    
+    <AppointmentViewModal 
+      v-if="modals.appointmentView"
+      :appointment="selectedAppointment!"
+      @close="closeAppointmentView"
+      @delete="deleteAppointment"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, watch } from 'vue'
+import type { QuickNote, Appointment, Goal } from '~/types'
+import { useLocalStorage } from '~/composables/useLocalStorage'
+import NotAuthenticated from '~/components/NotAuthenticated.vue'
+
+// Auth
+const user = useSupabaseUser()
+const userStore = useUserStore()
+const compendiumStore = useCompendiumStore()
+const { initSync, saveUserData } = useCompendiumSync()
+
+const isLoading = ref(true)
+const isAuthenticated = computed(() => !!user.value)
+const isSaving = ref(false)
+const showSaved = ref(false)
+const lastSyncedAt = ref<string | null>(null)
+
+const saveButtonText = computed(() => {
+  if (isSaving.value) return 'SAVING...'
+  if (showSaved.value) return 'SAVED!'
+  return 'SAVE'
+})
+
+function formatLastSync(dateStr: string) {
+  const date = new Date(dateStr)
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+}
+
+async function handleSave() {
+  if (isSaving.value) return
+  
+  isSaving.value = true
+  
+  // Atualizar a store com os dados atuais
+  compendiumStore.loadFromData({
+    notes: notes.value,
+    appointments: appointments.value,
+    goals: goals.value
+  })
+  
+  const success = await saveUserData()
+  
+  isSaving.value = false
+  
+  if (success) {
+    showSaved.value = true
+    lastSyncedAt.value = new Date().toISOString()
+    setTimeout(() => {
+      showSaved.value = false
+    }, 2000)
+  }
+}
+
+// Componentes
+import MiniCalendar from '~/components/compendium/MiniCalendar.vue'
+import MiniNotes from '~/components/compendium/MiniNotes.vue'
+import MiniAppointments from '~/components/compendium/MiniAppointments.vue'
+import MiniGoals from '~/components/compendium/MiniGoals.vue'
+import NotesModal from '~/components/compendium/NotesModal.vue'
+import AppointmentsModal from '~/components/compendium/AppointmentsModal.vue'
+import GoalsModal from '~/components/compendium/GoalsModal.vue'
+import DaySummaryModal from '~/components/compendium/DaySummaryModal.vue'
+import FullCalendarModal from '~/components/compendium/FullCalendarModal.vue'
+import AppointmentViewModal from '~/components/compendium/AppointmentViewModal.vue'
+
+// Composables
+const storage = useLocalStorage()
+
+// Estado
+const notes = ref<QuickNote[]>([])
+const appointments = ref<Appointment[]>([])
+const goals = ref<Goal[]>([])
+
+// Modais
+const modals = ref({
+  notes: false,
+  appointments: false,
+  goals: false,
+  daySummary: false,
+  fullCalendar: false,
+  appointmentView: false
+})
+
+const selectedNote = ref<QuickNote | undefined>()
+const selectedGoal = ref<Goal | undefined>()
+const selectedAppointment = ref<Appointment | undefined>()
+const selectedDate = ref('')
+
+// Carregar dados - primeiro do Supabase, fallback para localStorage
+onMounted(async () => {
+  if (user.value) {
+    await initSync()
+    // Carregar dados da store (que veio do Supabase)
+    notes.value = compendiumStore.notes
+    appointments.value = compendiumStore.appointments
+    goals.value = compendiumStore.goals
+    lastSyncedAt.value = compendiumStore.lastSyncedAt
+  } else {
+    // Fallback para localStorage se não estiver logado
+    const data = storage.loadCompendiumData()
+    notes.value = data.notes
+    appointments.value = data.appointments
+    goals.value = data.goals
+  }
+  isLoading.value = false
+})
+
+// Persistir dados quando houver mudanças
+watch([notes, appointments, goals], () => {
+  storage.saveCompendiumData({
+    notes: notes.value,
+    appointments: appointments.value,
+    goals: goals.value
+  })
+}, { deep: true })
+
+// === NOTES ===
+const openNotesModal = (note?: QuickNote) => {
+  selectedNote.value = note
+  modals.value.notes = true
+}
+
+const closeNotesModal = () => {
+  modals.value.notes = false
+  selectedNote.value = undefined
+}
+
+const saveNote = (noteData: QuickNote) => {
+  const index = notes.value.findIndex(n => n.id === noteData.id)
+  if (index !== -1) {
+    notes.value[index] = noteData
+  } else {
+    notes.value.push(noteData)
+  }
+}
+
+const deleteNote = (noteId: string) => {
+  if (confirm('Are you sure you want to delete this note?')) {
+    notes.value = notes.value.filter(n => n.id !== noteId)
+  }
+}
+
+// === APPOINTMENTS ===
+const openAppointmentsModal = () => {
+  modals.value.appointments = true
+}
+
+const closeAppointmentsModal = () => {
+  modals.value.appointments = false
+}
+
+const saveAppointment = (appointmentData: Appointment) => {
+  appointments.value.push(appointmentData)
+}
+
+const deleteAppointment = (appointmentId: string) => {
+  if (confirm('Are you sure you want to delete this appointment?')) {
+    appointments.value = appointments.value.filter(a => a.id !== appointmentId)
+  }
+}
+
+const viewAppointment = (appointment: Appointment) => {
+  selectedAppointment.value = appointment
+  modals.value.appointmentView = true
+}
+
+const closeAppointmentView = () => {
+  modals.value.appointmentView = false
+  selectedAppointment.value = undefined
+}
+
+const viewAppointmentFromSummary = (appointment: Appointment) => {
+  modals.value.daySummary = false
+  selectedAppointment.value = appointment
+  modals.value.appointmentView = true
+}
+
+const viewGoalFromSummary = (goal: Goal) => {
+  modals.value.daySummary = false
+  selectedGoal.value = goal
+  modals.value.goals = true
+}
+
+// === GOALS ===
+const openGoalsModal = (goal?: Goal) => {
+  selectedGoal.value = goal
+  modals.value.goals = true
+}
+
+const closeGoalsModal = () => {
+  modals.value.goals = false
+  selectedGoal.value = undefined
+}
+
+const saveGoal = (goalData: Goal) => {
+  const index = goals.value.findIndex(g => g.id === goalData.id)
+  if (index !== -1) {
+    goals.value[index] = goalData
+  } else {
+    goals.value.push(goalData)
+  }
+}
+
+const deleteGoal = (goalId: string) => {
+  if (confirm('Are you sure you want to delete this goal?')) {
+    goals.value = goals.value.filter(g => g.id !== goalId)
+  }
+}
+
+// === DAY SUMMARY ===
+const openDaySummary = (date: string) => {
+  selectedDate.value = date
+  modals.value.daySummary = true
+}
+
+const closeDaySummary = () => {
+  modals.value.daySummary = false
+  selectedDate.value = ''
+}
+
+// === FULL CALENDAR ===
+const openFullCalendar = () => {
+  modals.value.fullCalendar = true
+}
+
+const closeFullCalendar = () => {
+  modals.value.fullCalendar = false
+}
+
+const openDaySummaryFromCalendar = (date: string) => {
+  modals.value.fullCalendar = false
+  selectedDate.value = date
+  modals.value.daySummary = true
+}
+</script>
+
+<style scoped>
+.compendium-dashboard {
+  min-height: 100vh;
+  background: #0a0a0a;
+  padding: 1.5rem;
+  position: relative;
+}
+
+/* Botão de salvar flutuante */
+.save-button {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #ffffff;
+  background-color: #000000;
+  border: 2px solid #ffffff;
+  padding: 0.8rem 1.2rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  z-index: 100;
+}
+
+.save-button:hover:not(:disabled) {
+  background-color: #ffffff;
+  color: #000000;
+}
+
+.save-button:disabled {
+  cursor: not-allowed;
+}
+
+.save-button.saving {
+  opacity: 0.7;
+}
+
+.save-button.saved {
+  border-color: #4ade80;
+  color: #4ade80;
+}
+
+.save-button.saved:hover {
+  background-color: #4ade80;
+  color: #000000;
+}
+
+.save-text {
+  text-transform: uppercase;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: auto 1fr 1fr;
+  gap: 1rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.grid-item {
+  max-height: 380px;
+}
+
+.calendar-section {
+  grid-column: span 2;
+  max-height: 160px;
+}
+
+.notes-section,
+.appointments-section,
+.goals-section {
+  min-height: 280px;
+  max-height: 380px;
+}
+
+/* Desktop grande */
+@media (min-width: 1280px) {
+  .compendium-dashboard {
+    padding: 2rem 3rem;
+  }
+  
+  .dashboard-grid {
+    gap: 1.25rem;
+  }
+  
+  .calendar-section {
+    max-height: 180px;
+  }
+  
+  .notes-section,
+  .appointments-section,
+  .goals-section {
+    min-height: 320px;
+    max-height: 420px;
+  }
+}
+
+/* Tablet */
+@media (max-width: 1024px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: auto auto auto;
+    gap: 0.875rem;
+  }
+  
+  .calendar-section {
+    grid-column: span 2;
+    max-height: 150px;
+  }
+  
+  .notes-section,
+  .appointments-section,
+  .goals-section {
+    min-height: 260px;
+    max-height: 340px;
+  }
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .compendium-dashboard {
+    padding: 1rem;
+  }
+  
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    gap: 0.75rem;
+  }
+  
+  .calendar-section {
+    grid-column: span 1;
+    max-height: 140px;
+  }
+  
+  .notes-section,
+  .appointments-section,
+  .goals-section {
+    min-height: 240px;
+    max-height: 320px;
+  }
+}
+
+/* Mobile pequeno */
+@media (max-width: 480px) {
+  .compendium-dashboard {
+    padding: 0.75rem;
+  }
+  
+  .calendar-section {
+    max-height: 130px;
+  }
+  
+  .notes-section,
+  .appointments-section,
+  .goals-section {
+    min-height: 220px;
+    max-height: 300px;
+  }
+}
+
+.loading-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #000000;
+  color: #ffffff;
+  font-family: 'Space Mono', monospace;
+  font-size: 1rem;
+  letter-spacing: 0.1em;
+}
+</style>
